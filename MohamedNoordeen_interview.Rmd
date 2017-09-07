@@ -1,0 +1,250 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(C50)
+library(caret)
+library(rpart)
+```
+
+Reading the data and assigning it to a variable
+```{r}
+
+tabA <- read.csv("TABULAR_A.csv")
+tabB <- read.csv("TABULAR_B.csv")
+
+```
+
+Displaying first 3 row from tabA 
+```{r}
+
+head(tabA,n = 3)
+
+```
+
+Displaying last 3 rows from tabA
+```{r}
+
+tail(tabB,n = 3)
+
+```
+
+loading sqldf library
+```{r}
+library(sqldf)
+```
+
+Query and find each count in car_rank category
+```{r}
+sqldf("select car_rank, count(*) as tot from tabA group by car_rank order by tot desc")
+
+```
+
+Leftouter join with tabB and find the category
+```{r}
+sqldf("select a.car_rank, count(*) as tot from tabA as a left outer join tabB as b  on a.owner_id = b.owner_id group by a.car_rank order by tot desc")
+
+```
+
+find the duplicates of owner_id in tabB
+```{r}
+
+sqldf("SELECT owner_id, COUNT(*) count FROM tabB GROUP BY owner_id HAVING count > 1")
+
+```
+
+Segmenting tht tabA with 3 clusters
+```{r}
+
+set.seed(21)
+tabACluster <- kmeans(tabA[, 2:7], 3,nstart = 20)
+tabACluster
+
+plot(tabA[, 2:7], col =(tabACluster$cluster +1) , main="K-Means result with 3 clusters", pch=20, cex=2)
+
+
+
+```
+
+
+Comparing the cluster obtained with car_rank distribution
+```{r}
+
+table(tabACluster$cluster, tabA$car_rank)
+
+```
+Converting the cluster label to factor variable
+
+```{r}
+
+clust <- as.factor(tabACluster$cluster)
+
+```
+
+
+Merging the cluster label with the tabA
+
+```{r}
+
+tabA <- cbind(tabA,clust)
+
+str(tabA)
+
+```
+
+Segregating the data based on their cluster obtained
+```{r}
+
+tabA_1 = tabA[with(tabA, clust == "1" ),]
+
+tabA_2 = tabA[with(tabA, clust == "2" ),]
+
+tabA_3 = tabA[with(tabA, clust == "3" ),]
+
+```
+
+
+comparing the distribution of data across cluster and car_rank
+```{r}
+
+table(tabA_1$clust, tabA_1$car_rank)
+
+table(tabA_2$clust, tabA_2$car_rank)
+
+table(tabA_3$clust, tabA_3$car_rank)
+
+
+```
+
+
+*****************************************************************************
+Cluster 1: The car_rank contains two class
+Cluster 2: The car_rank contains only one class
+Cluster 3: The car_rank contains all 4 class
+******************************************************************************
+
+-------------------------------
+Modeling 
+-------------------------------
+
+
+Spliting data to train and test
+Function to re-use the code on each clusters
+```{r}
+
+splitData <- function(x){
+# Divide the data into test and train
+set.seed(123)
+
+train_RowIDs = sample(1:nrow(x), nrow(x)*0.7)
+train_Data = x[train_RowIDs,]
+test_Data = x[-train_RowIDs,]
+
+dataList<- list("train"= train_Data, "test"= test_Data) 
+
+
+return(dataList)
+
+rm(train_RowIDs)
+}
+
+```
+
+Spliting on cluster 1 and 3 data
+```{r}
+
+tabA_1_split <- splitData(tabA_1)
+
+tabA_3_split <- splitData(tabA_3)
+
+```
+
+Modeling using Decision tree with rpart function
+
+```{r}
+
+decisionTree_rpart <- function(dataf){
+dtCart=rpart(car_rank~car_price + maint_cost + num_doors + person_capacity + trunk_size + safety_rating, data=dataf$train, method="class")    
+
+#Ploting the decision graph
+plot(dtCart,main="Classification Tree for Car Rank Class",margin=0.15,uniform=TRUE)
+text(dtCart,use.n=T)
+#Summarizing the rules
+summary(dtCart)
+
+#Predict in train data
+print("Train Error Metrics")
+
+ctrain = table(dataf$train$car_rank, predict(dtCart, newdata=dataf$train, type="class"))
+
+ctrain_confusion <- confusionMatrix(ctrain)
+print(ctrain_confusion)
+#predict in test data
+ctest=table(dataf$test$car_rank, predict(dtCart, newdata=dataf$test, type="class"))
+
+print("Test Error Metrics")
+ctest_confusion <- confusionMatrix(ctest)
+print(ctest_confusion)
+}
+
+```
+
+Running the decision tree on cluster 1 data
+```{r}
+
+decisionTree_rpart(tabA_1_split)
+
+print("Train Accuracy is 96")
+print("Test Accuracy is 97")
+```
+Running the decision tree on cluster 3 data
+
+```{r}
+decisionTree_rpart(tabA_3_split)
+print("Train Accuracy is 90")
+print("Test Accuracy is 85")
+
+```
+
+Modelbuilding using Decision Tree using C5.0
+
+
+Wrinting function to reuse
+```{r}
+
+decisionTree_C5 <- function(dataf){
+dtC50 = C5.0(car_rank~car_price + maint_cost   + trunk_size + safety_rating, data = dataf$train, rules=TRUE)
+
+#summarize the rules
+summary(dtC50)
+
+
+#predicting the train data
+ctrain = table(dataf$train$car_rank, predict(dtC50, newdata=dataf$train, type="class"))
+print("Train Error Metrics")
+ctrain_confusion <- confusionMatrix(ctrain)
+print(ctrain_confusion)
+
+#predicting the test data
+ctest=table(dataf$test$car_rank, predict(dtC50, newdata=dataf$test, type="class"))
+print("Test Error Metrics")
+ctest_confusion <- confusionMatrix(ctest)
+print(ctest_confusion)
+
+}
+
+```
+
+
+Running the decision tree on cluster 1 and 3 data
+```{r}
+decisionTree_C5(tabA_1_split)
+
+decisionTree_C5(tabA_3_split)
+
+
+```
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
